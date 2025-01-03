@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Delivery Cost Calculator</title>
+    <!-- Include the Luxon library for time zone handling -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/luxon/2.3.0/luxon.min.js"></script>
+    <script src="//js.jotform.com/JotFormCustomWidget.min.js"></script>
+    <style>
+        /* Your existing styles */
+        #widget-container {
+            font-family: Arial, sans-serif;
+            padding: 10px;
+            max-width: 400px;
+            margin: auto;
+        }
+        #delivery-cost {
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        #address-input {
+            width: 100%;
+            padding: 8px;
+            margin-top: 5px;
+            box-sizing: border-box;
+        }
+        #map {
+            height: 300px;
+            margin-top: 10px;
+        }
+        label {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="widget-container">
+        <label for="address-input">Enter your address:</label><br>
+        <input type="text" id="address-input" placeholder="Start typing your address..."><br>
+        <div id="delivery-cost"></div>
+        <div id="map"></div>
+    </div>
+    <script>
+        JFCustomWidget.subscribe("ready", function() {
+            // Retrieve parameters
+            var googleApiKey = JFCustomWidget.getWidgetSetting('googleApiKey'); // API Key
+            var costPerKm = parseFloat(JFCustomWidget.getWidgetSetting('costPerKm'));
+            var costPerTime = parseFloat(JFCustomWidget.getWidgetSetting('costPerTime'));
+            var originLat = parseFloat(JFCustomWidget.getWidgetSetting('originLat'));
+            var originLng = parseFloat(JFCustomWidget.getWidgetSetting('originLng'));
+            var maxDeliveryTime = parseFloat(JFCustomWidget.getWidgetSetting('maxDeliveryTime'));
+            var maxDeliveryDistance = parseFloat(JFCustomWidget.getWidgetSetting('maxDeliveryDistance'));
+
+            // Validate parameters
+            if (!googleApiKey || isNaN(costPerKm) || isNaN(costPerTime) ||
+                isNaN(originLat) || isNaN(originLng) ||
+                isNaN(maxDeliveryTime) || isNaN(maxDeliveryDistance)) {
+                alert('Widget configuration is incomplete or invalid.');
+                return;
+            }
+
+            // Load Google Maps API
+            var script = document.createElement('script');
+            script.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(googleApiKey) + '&libraries=places';
+            document.head.appendChild(script);
+
+            script.onload = function() {
+                initializeWidget();
+            };
+
+            function initializeWidget() {
+                var addressInput = document.getElementById('address-input');
+                var autocomplete = new google.maps.places.Autocomplete(addressInput);
+                var deliveryCost = 0;
+                var destinationLat, destinationLng;
+                var map;
+                var marker;
+
+                autocomplete.addListener('place_changed', function() {
+                    var place = autocomplete.getPlace();
+                    if (!place.geometry) {
+                        addressInput.value = '';
+                        alert('Please select an address from the suggestions.');
+                        return;
+                    }
+
+                    destinationLat = place.geometry.location.lat();
+                    destinationLng = place.geometry.location.lng();
+
+                    // Initialize map
+                    if (!map) {
+                        map = new google.maps.Map(document.getElementById('map'), {
+                            center: { lat: destinationLat, lng: destinationLng },
+                            zoom: 15
+                        });
+                    } else {
+                        map.setCenter({ lat: destinationLat, lng: destinationLng });
+                    }
+
+                    // Set marker
+                    if (!marker) {
+                        marker = new google.maps.Marker({
+                            position: { lat: destinationLat, lng: destinationLng },
+                            map: map
+                        });
+                    } else {
+                        marker.setPosition({ lat: destinationLat, lng: destinationLng });
+                    }
+
+                    calculateDeliveryCost(originLat, originLng, destinationLat, destinationLng);
+                });
+
+                function calculateDeliveryCost(originLat, originLng, destLat, destLng) {
+                    var origin = new google.maps.LatLng(originLat, originLng);
+                    var destination = new google.maps.LatLng(destLat, destLng);
+
+                    var directionsService = new google.maps.DirectionsService();
+
+                    // Use Luxon to handle time zones and set times in EST
+                    var DateTime = luxon.DateTime;
+
+                    // Set today's date to December 1, 2024 in EST
+                    var today = DateTime.fromObject({ year: 2024, month: 12, day: 1 }, { zone: 'America/New_York' });
+
+                    // Calculate dates for Wednesday and Saturday at 5:30 PM EST
+                    var wednesday = today.plus({ days: (3 - today.weekday + 7) % 7 });
+                    wednesday = wednesday.set({ hour: 17, minute: 30, second: 0, millisecond: 0 });
+
+                    var saturday = today.plus({ days: (6 - today.weekday + 7) % 7 });
+                    saturday = saturday.set({ hour: 17, minute: 30, second: 0, millisecond: 0 });
+
+                    // Convert Luxon DateTime to JavaScript Date
+                    var wednesdayDate = wednesday.toJSDate();
+                    var saturdayDate = saturday.toJSDate();
+
+                    // Function to get duration and distance for a specific date
+                    function getDuration(departureTime, callback) {
+                        directionsService.route({
+                            origin: origin,
+                            destination: destination,
+                            travelMode: 'DRIVING',
+                            drivingOptions: {
+                                departureTime: departureTime,
+                                trafficModel: 'bestguess'
+                            }
+                        }, function(response, status) {
+                            if (status === 'OK') {
+                                var route = response.routes[0];
+                                var legData = route.legs[0];
+                                var durationInSeconds = legData.duration_in_traffic ? legData.duration_in_traffic.value : legData.duration.value;
+                                var distanceInMeters = legData.distance.value;
+                                callback(null, { duration: durationInSeconds, distance: distanceInMeters });
+                            } else {
+                                callback(status, null);
+                            }
+                        });
+                    }
+
+                    // Get durations for both days
+                    getDuration(wednesdayDate, function(err, resultWed) {
+                        if (err) {
+                            alert('Error calculating duration for Wednesday: ' + err);
+                            return;
+                        }
+
+                        getDuration(saturdayDate, function(err, resultSat) {
+                            if (err) {
+                                alert('Error calculating duration for Saturday: ' + err);
+                                return;
+                            }
+
+                            // Calculate average duration
+                            var avgDurationInSeconds = (resultWed.duration + resultSat.duration) / 2;
+                            var avgDurationInHours = avgDurationInSeconds / 3600;
+
+                            // Get distance (should be the same for both days)
+                            var distanceInKm = resultWed.distance / 1000;
+
+                            // Check max constraints
+                            if (distanceInKm > maxDeliveryDistance || avgDurationInHours > maxDeliveryTime) {
+                                document.getElementById('delivery-cost').innerHTML = 'Delivery Status: Out of Zone';
+                                deliveryCost = 0; // Set deliveryCost to 0 if out of zone
+                                // Send data to form
+                                var msg = {
+                                    value: "1000" // Out of service code as a string
+                                };
+                                JFCustomWidget.sendData(msg);
+                                return;
+                            }
+
+                            // Calculate cost
+                            var costDistance = distanceInKm * costPerKm;
+                            var costTime = avgDurationInHours * costPerTime;
+                            deliveryCost = costDistance + costTime;
+
+                            // Display delivery cost
+                            document.getElementById('delivery-cost').innerHTML = 'Delivery Cost: $' + deliveryCost.toFixed(2);
+
+                            // Send data to form immediately after calculation
+                            var msg = {
+                                value: deliveryCost.toFixed(2) // Send as string
+                            };
+                            JFCustomWidget.sendData(msg);
+                        });
+                    });
+                }
+
+                // Subscribe to form submit event
+                JFCustomWidget.subscribe("submit", function() {
+                    var outputValue = deliveryCost > 0 ? deliveryCost.toFixed(2) : "1000"; // Ensure the value is a string
+                    var msg = {
+                        valid: true,
+                        value: outputValue
+                    };
+                    JFCustomWidget.sendSubmit(msg);
+                });
+            }
+        });
+    </script>
+</body>
+</html>
