@@ -38,22 +38,24 @@
         <div id="delivery-cost"></div>
         <div id="map"></div>
     </div>
-    
+
     <script>
         JFCustomWidget.subscribe("ready", function() {
             // Retrieve parameters
-            var googleApiKey = JFCustomWidget.getWidgetSetting('googleApiKey'); // API Key
-            var costPerKm = parseFloat(JFCustomWidget.getWidgetSetting('costPerKm'));
-            var costPerTime = parseFloat(JFCustomWidget.getWidgetSetting('costPerTime'));
-            var originLat = parseFloat(JFCustomWidget.getWidgetSetting('originLat'));
-            var originLng = parseFloat(JFCustomWidget.getWidgetSetting('originLng'));
-            var maxDeliveryTime = parseFloat(JFCustomWidget.getWidgetSetting('maxDeliveryTime'));
+            var googleApiKey        = JFCustomWidget.getWidgetSetting('googleApiKey'); // API Key
+            var costPerKm           = parseFloat(JFCustomWidget.getWidgetSetting('costPerKm'));
+            var costPerTime         = parseFloat(JFCustomWidget.getWidgetSetting('costPerTime'));
+            var originLat           = parseFloat(JFCustomWidget.getWidgetSetting('originLat'));
+            var originLng           = parseFloat(JFCustomWidget.getWidgetSetting('originLng'));
+            var maxDeliveryTime     = parseFloat(JFCustomWidget.getWidgetSetting('maxDeliveryTime'));
             var maxDeliveryDistance = parseFloat(JFCustomWidget.getWidgetSetting('maxDeliveryDistance'));
+            var maxFreeDeliveryAmount = parseFloat(JFCustomWidget.getWidgetSetting('maxFreeDeliveryAmount'));
 
             // Validate parameters
             if (!googleApiKey || isNaN(costPerKm) || isNaN(costPerTime) ||
                 isNaN(originLat) || isNaN(originLng) ||
-                isNaN(maxDeliveryTime) || isNaN(maxDeliveryDistance)) {
+                isNaN(maxDeliveryTime) || isNaN(maxDeliveryDistance) ||
+                isNaN(maxFreeDeliveryAmount)) {
                 alert('Widget configuration is incomplete or invalid.');
                 return;
             }
@@ -75,6 +77,7 @@
                 var map;
                 var marker;
 
+                // Listen for place selection
                 autocomplete.addListener('place_changed', function() {
                     var place = autocomplete.getPlace();
                     if (!place.geometry) {
@@ -86,7 +89,7 @@
                     destinationLat = place.geometry.location.lat();
                     destinationLng = place.geometry.location.lng();
 
-                    // Initialize map
+                    // Initialize or update map
                     if (!map) {
                         map = new google.maps.Map(document.getElementById('map'), {
                             center: { lat: destinationLat, lng: destinationLng },
@@ -106,13 +109,13 @@
                         marker.setPosition({ lat: destinationLat, lng: destinationLng });
                     }
 
+                    // Calculate Delivery Cost
                     calculateDeliveryCost(originLat, originLng, destinationLat, destinationLng);
                 });
 
                 function calculateDeliveryCost(originLat, originLng, destLat, destLng) {
                     var origin = new google.maps.LatLng(originLat, originLng);
                     var destination = new google.maps.LatLng(destLat, destLng);
-
                     var directionsService = new google.maps.DirectionsService();
                     var DateTime = luxon.DateTime;
 
@@ -121,7 +124,7 @@
                         .setZone('America/New_York')
                         .plus({ days: 1 })
                         .set({ hour: 17, minute: 30, second: 0, millisecond: 0 });
-                    var departureTime = departureLuxon.toJSDate();  // Convert to JavaScript Date
+                    var departureTime = departureLuxon.toJSDate();
 
                     // Single request for tomorrow at 5:30 PM
                     directionsService.route({
@@ -148,16 +151,23 @@
                             // Check max constraints
                             if (distanceInKm > maxDeliveryDistance || durationInHours > maxDeliveryTime) {
                                 document.getElementById('delivery-cost').innerHTML = 'Delivery Status: Out of Zone';
-                                deliveryCost = 0; // or set to "1000" if out of zone
-                                // Send data to form
+                                deliveryCost = 0; // Out of zone => send "1000" or 0 as you prefer
                                 JFCustomWidget.sendData({ value: "1000" });
                                 return;
                             }
 
-                            // Calculate cost
+                            // Calculate raw cost
                             var costDistance = distanceInKm * costPerKm;
                             var costTime = durationInHours * costPerTime;
-                            deliveryCost = costDistance + costTime;
+                            var rawCost = costDistance + costTime;
+
+                            // Subtract maxFreeDeliveryAmount
+                            var netCost = rawCost - maxFreeDeliveryAmount;
+                            if (netCost < 0) {
+                                netCost = 0;
+                            }
+
+                            deliveryCost = netCost;
 
                             // Display delivery cost
                             document.getElementById('delivery-cost').innerHTML =
@@ -173,7 +183,7 @@
 
                 // Subscribe to form submit event
                 JFCustomWidget.subscribe("submit", function() {
-                    var outputValue = deliveryCost > 0 ? deliveryCost.toFixed(2) : "1000"; 
+                    var outputValue = deliveryCost > 0 ? deliveryCost.toFixed(2) : "1000";
                     var msg = {
                         valid: true,
                         value: outputValue
