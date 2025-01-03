@@ -6,7 +6,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/luxon/2.3.0/luxon.min.js"></script>
     <script src="//js.jotform.com/JotFormCustomWidget.min.js"></script>
     <style>
-        /* Your existing styles */
         #widget-container {
             font-family: Arial, sans-serif;
             padding: 10px;
@@ -39,6 +38,7 @@
         <div id="delivery-cost"></div>
         <div id="map"></div>
     </div>
+    
     <script>
         JFCustomWidget.subscribe("ready", function() {
             // Retrieve parameters
@@ -114,99 +114,66 @@
                     var destination = new google.maps.LatLng(destLat, destLng);
 
                     var directionsService = new google.maps.DirectionsService();
-
-                    // Use Luxon to handle time zones and set times in EST
                     var DateTime = luxon.DateTime;
 
-                    // Set today's date to December 1, 2024 in EST
-                    var today = DateTime.fromObject({ year: 2024, month: 12, day: 1 }, { zone: 'America/New_York' });
+                    // Calculate tomorrow at 5:30 PM in EST
+                    var departureLuxon = DateTime.now()
+                        .setZone('America/New_York')
+                        .plus({ days: 1 })
+                        .set({ hour: 17, minute: 30, second: 0, millisecond: 0 });
+                    var departureTime = departureLuxon.toJSDate();  // Convert to JavaScript Date
 
-                    // Calculate dates for Wednesday and Saturday at 5:30 PM EST
-                    var wednesday = today.plus({ days: (3 - today.weekday + 7) % 7 });
-                    wednesday = wednesday.set({ hour: 17, minute: 30, second: 0, millisecond: 0 });
-
-                    var saturday = today.plus({ days: (6 - today.weekday + 7) % 7 });
-                    saturday = saturday.set({ hour: 17, minute: 30, second: 0, millisecond: 0 });
-
-                    // Convert Luxon DateTime to JavaScript Date
-                    var wednesdayDate = wednesday.toJSDate();
-                    var saturdayDate = saturday.toJSDate();
-
-                    // Function to get duration and distance for a specific date
-                    function getDuration(departureTime, callback) {
-                        directionsService.route({
-                            origin: origin,
-                            destination: destination,
-                            travelMode: 'DRIVING',
-                            drivingOptions: {
-                                departureTime: departureTime,
-                                trafficModel: 'bestguess'
-                            }
-                        }, function(response, status) {
-                            if (status === 'OK') {
-                                var route = response.routes[0];
-                                var legData = route.legs[0];
-                                var durationInSeconds = legData.duration_in_traffic ? legData.duration_in_traffic.value : legData.duration.value;
-                                var distanceInMeters = legData.distance.value;
-                                callback(null, { duration: durationInSeconds, distance: distanceInMeters });
-                            } else {
-                                callback(status, null);
-                            }
-                        });
-                    }
-
-                    // Get durations for both days
-                    getDuration(wednesdayDate, function(err, resultWed) {
-                        if (err) {
-                            alert('Error calculating duration for Wednesday: ' + err);
-                            return;
+                    // Single request for tomorrow at 5:30 PM
+                    directionsService.route({
+                        origin: origin,
+                        destination: destination,
+                        travelMode: 'DRIVING',
+                        drivingOptions: {
+                            departureTime: departureTime,
+                            trafficModel: 'bestguess'
                         }
+                    }, function(response, status) {
+                        if (status === 'OK') {
+                            var route = response.routes[0];
+                            var legData = route.legs[0];
+                            var durationInSeconds = legData.duration_in_traffic
+                                ? legData.duration_in_traffic.value
+                                : legData.duration.value;
+                            var distanceInMeters = legData.distance.value;
 
-                        getDuration(saturdayDate, function(err, resultSat) {
-                            if (err) {
-                                alert('Error calculating duration for Saturday: ' + err);
-                                return;
-                            }
-
-                            // Calculate average duration
-                            var avgDurationInSeconds = (resultWed.duration + resultSat.duration) / 2;
-                            var avgDurationInHours = avgDurationInSeconds / 3600;
-
-                            // Get distance (should be the same for both days)
-                            var distanceInKm = resultWed.distance / 1000;
+                            // Convert data to hours & kilometers
+                            var durationInHours = durationInSeconds / 3600;
+                            var distanceInKm = distanceInMeters / 1000;
 
                             // Check max constraints
-                            if (distanceInKm > maxDeliveryDistance || avgDurationInHours > maxDeliveryTime) {
+                            if (distanceInKm > maxDeliveryDistance || durationInHours > maxDeliveryTime) {
                                 document.getElementById('delivery-cost').innerHTML = 'Delivery Status: Out of Zone';
-                                deliveryCost = 0; // Set deliveryCost to 0 if out of zone
+                                deliveryCost = 0; // or set to "1000" if out of zone
                                 // Send data to form
-                                var msg = {
-                                    value: "1000" // Out of service code as a string
-                                };
-                                JFCustomWidget.sendData(msg);
+                                JFCustomWidget.sendData({ value: "1000" });
                                 return;
                             }
 
                             // Calculate cost
                             var costDistance = distanceInKm * costPerKm;
-                            var costTime = avgDurationInHours * costPerTime;
+                            var costTime = durationInHours * costPerTime;
                             deliveryCost = costDistance + costTime;
 
                             // Display delivery cost
-                            document.getElementById('delivery-cost').innerHTML = 'Delivery Cost: $' + deliveryCost.toFixed(2);
+                            document.getElementById('delivery-cost').innerHTML =
+                                'Delivery Cost: $' + deliveryCost.toFixed(2);
 
-                            // Send data to form immediately after calculation
-                            var msg = {
-                                value: deliveryCost.toFixed(2) // Send as string
-                            };
-                            JFCustomWidget.sendData(msg);
-                        });
+                            // Send data to form
+                            JFCustomWidget.sendData({ value: deliveryCost.toFixed(2) });
+                        } else {
+                            alert('Directions request failed: ' + status);
+                        }
                     });
                 }
 
                 // Subscribe to form submit event
                 JFCustomWidget.subscribe("submit", function() {
-                    var outputValue = deliveryCost > 0 ? deliveryCost.toFixed(2) : "1000"; // Ensure the value is a string
+                    var outputValue = deliveryCost > 0 ? deliveryCost.toFixed(2) : "1000"; 
                     var msg = {
                         valid: true,
                         value: outputValue
